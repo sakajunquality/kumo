@@ -472,8 +472,12 @@ kumo provides additional endpoints under the `/kumo/` prefix for testing purpose
 SES v2 `SendEmail` and `SendBulkEmail` render stored templates selected by
 `TemplateName` in the captured subject, text, and HTML bodies. Rendering supports
 scalar `{{name}}` placeholders and nested paths such as `{{contact.firstName}}`,
-without HTML escaping. Bulk entries use replacement template data when provided,
-otherwise the default template data; replacement data replaces the whole object.
+`{{this.name}}`, and array indexes (`{{items.0}}` or `{{items.[0]}}`), without HTML
+escaping. A JSON `null` value renders as an empty string. Use `\{{` to emit a
+literal `{{` (for example in CSS or JavaScript); a `{{` that is not escaped must
+be closed with `}}`. Bulk entries use replacement template data when provided
+(including `{}`), otherwise the default template data; replacement data replaces
+the whole object, and an empty string fails the entry.
 
 Advanced Handlebars helpers, inline partials, inline templates, and template ARN
 resolution are not supported. Rendering errors are reported synchronously as

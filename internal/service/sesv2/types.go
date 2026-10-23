@@ -322,7 +322,9 @@ type ReplacementEmailContent struct {
 
 // ReplacementTemplate carries per-entry replacement template data.
 type ReplacementTemplate struct {
-	ReplacementTemplateData string `json:"ReplacementTemplateData,omitempty"`
+	// ReplacementTemplateData is a pointer so an absent value (use the default
+	// data) is distinguishable from an explicit one, including "{}" and "".
+	ReplacementTemplateData *string `json:"ReplacementTemplateData,omitempty"`
 }
 
 // SendBulkEmailResponse is the response for SendBulkEmail.

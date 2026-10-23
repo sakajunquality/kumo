@@ -138,7 +138,7 @@ func TestSendEmail_SimpleEmailWithoutDestination_ShouldFail(t *testing.T) {
 		t.Fatalf("expected IdentityError, got %T", err)
 	}
 
-	if identityErr.Message != "Destination is required" {
+	if identityErr.Message != msgDestinationRequired {
 		t.Errorf("expected 'Destination is required', got '%s'", identityErr.Message)
 	}
 }
@@ -167,13 +167,13 @@ func newBulkSendFixture(t *testing.T, storage *MemoryStorage) *SendBulkEmailRequ
 			{
 				Destination: &Destination{ToAddresses: []string{testRecipientEmail}},
 				ReplacementEmailContent: &ReplacementEmailContent{
-					ReplacementTemplate: &ReplacementTemplate{ReplacementTemplateData: `{"name":"A"}`},
+					ReplacementTemplate: &ReplacementTemplate{ReplacementTemplateData: new(`{"name":"A"}`)},
 				},
 			},
 			{
 				Destination: &Destination{ToAddresses: []string{"b@example.com"}},
 				ReplacementEmailContent: &ReplacementEmailContent{
-					ReplacementTemplate: &ReplacementTemplate{ReplacementTemplateData: `{"name":"B"}`},
+					ReplacementTemplate: &ReplacementTemplate{ReplacementTemplateData: new(`{"name":"B"}`)},
 				},
 			},
 		},
@@ -197,7 +197,7 @@ func TestSendBulkEmail_AssignsMessageIDPerEntry(t *testing.T) {
 	ids := map[string]struct{}{}
 
 	for i, r := range resp.BulkEmailEntryResults {
-		if r.Status != "SUCCESS" {
+		if r.Status != statusSuccess {
 			t.Errorf("entry %d: status=%q want SUCCESS (err=%q)", i, r.Status, r.Error)
 		}
 
@@ -288,11 +288,11 @@ func TestSendBulkEmail_EntryWithoutDestinationFailsIndividually(t *testing.T) {
 		t.Fatalf("send bulk failed: %v", err)
 	}
 
-	if got := resp.BulkEmailEntryResults[0].Status; got != "SUCCESS" {
+	if got := resp.BulkEmailEntryResults[0].Status; got != statusSuccess {
 		t.Errorf("entry 0 status=%q want SUCCESS", got)
 	}
 
-	if got := resp.BulkEmailEntryResults[1].Status; got != "FAILED" {
+	if got := resp.BulkEmailEntryResults[1].Status; got != statusFailed {
 		t.Errorf("entry 1 status=%q want FAILED", got)
 	}
 }

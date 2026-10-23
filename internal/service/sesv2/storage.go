@@ -26,6 +26,12 @@ const (
 	errBadRequest       = "BadRequestException"
 
 	msgEmailTemplateNotExist = "The email template does not exist"
+
+	msgTemplateNameRequired = "TemplateName is required"
+	msgDestinationRequired  = "Destination is required"
+
+	statusFailed  = "FAILED"
+	statusSuccess = "SUCCESS"
 )
 
 // Storage defines the interface for SES v2 storage operations.
@@ -371,7 +377,7 @@ func (s *MemoryStorage) CreateEmailTemplate(_ context.Context, req *CreateEmailT
 	if req.TemplateName == "" {
 		return nil, &IdentityError{
 			Code:    errInvalidParameter,
-			Message: "TemplateName is required",
+			Message: msgTemplateNameRequired,
 		}
 	}
 
@@ -502,6 +508,13 @@ func (s *MemoryStorage) SendEmail(_ context.Context, req *SendEmailRequest) (str
 		}
 	}
 
+	if req.Content.Raw == nil && req.Content.Simple == nil && req.Content.Template == nil {
+		return "", &IdentityError{
+			Code:    errBadRequest,
+			Message: "Content must contain one of Simple, Raw, or Template",
+		}
+	}
+
 	// Destination is not required when Content.Raw is set,
 	// because recipients can be extracted from MIME headers.
 	hasDestination := req.Destination != nil &&
@@ -512,14 +525,14 @@ func (s *MemoryStorage) SendEmail(_ context.Context, req *SendEmailRequest) (str
 	if !hasDestination && req.Content.Raw == nil {
 		return "", &IdentityError{
 			Code:    errBadRequest,
-			Message: "Destination is required",
+			Message: msgDestinationRequired,
 		}
 	}
 
 	sentEmail := &SentEmail{
 		MessageID:            uuid.New().String(),
 		FromEmailAddress:     req.FromEmailAddress,
-		Destination:          req.Destination,
+		Destination:          cloneDestination(req.Destination),
 		ConfigurationSetName: req.ConfigurationSetName,
 		SentAt:               time.Now(),
 	}
@@ -552,14 +565,9 @@ func (s *MemoryStorage) populateSentEmailContent(content *EmailContent, sent *Se
 			return err
 		}
 
-		rendered, err := renderTemplate(tmpl.TemplateContent, content.Template.TemplateData)
-		if err != nil {
+		if err := populateTemplatedEmail(sent, tmpl, content.Template.TemplateName, content.Template.TemplateData); err != nil {
 			return &IdentityError{Code: errBadRequest, Message: err.Error()}
 		}
-
-		sent.Subject, sent.Body, sent.HTMLBody = rendered.Subject, rendered.Text, rendered.HTML
-		sent.TemplateName = content.Template.TemplateName
-		sent.TemplateData = content.Template.TemplateData
 	}
 
 	return nil
@@ -632,42 +640,52 @@ func buildBulkEmailEntry(req *SendBulkEmailRequest, entry *BulkEmailEntry, defau
 
 	if !hasDestination {
 		return nil, BulkEmailEntryResult{
-			Status:    "FAILED",
-			Error:     "Destination is required",
-			MessageID: messageID,
+			Status: statusFailed,
+			Error:  msgDestinationRequired,
 		}
 	}
 
-	templateData := defaultTemplate.TemplateData
-	if entry.ReplacementEmailContent != nil &&
-		entry.ReplacementEmailContent.ReplacementTemplate != nil &&
-		entry.ReplacementEmailContent.ReplacementTemplate.ReplacementTemplateData != "" {
-		templateData = entry.ReplacementEmailContent.ReplacementTemplate.ReplacementTemplateData
-	}
-
-	rendered, err := renderTemplate(tmpl.TemplateContent, templateData)
+	templateData, err := bulkTemplateData(entry, defaultTemplate)
 	if err != nil {
-		return nil, BulkEmailEntryResult{Status: "FAILED", Error: err.Error()}
+		return nil, BulkEmailEntryResult{Status: statusFailed, Error: err.Error()}
 	}
 
 	sent := &SentEmail{
 		MessageID:            messageID,
 		FromEmailAddress:     req.FromEmailAddress,
 		Destination:          cloneDestination(entry.Destination),
-		TemplateName:         defaultTemplate.TemplateName,
-		TemplateData:         templateData,
 		ConfigurationSetName: req.ConfigurationSetName,
 		SentAt:               time.Now(),
 	}
 
-	sent.Subject = rendered.Subject
-	sent.Body = rendered.Text
-	sent.HTMLBody = rendered.HTML
+	if err := populateTemplatedEmail(sent, tmpl, defaultTemplate.TemplateName, templateData); err != nil {
+		return nil, BulkEmailEntryResult{Status: statusFailed, Error: err.Error()}
+	}
 
 	return sent, BulkEmailEntryResult{
-		Status:    "SUCCESS",
+		Status:    statusSuccess,
 		MessageID: messageID,
 	}
+}
+
+// bulkTemplateData returns the template data for a bulk entry. Replacement data,
+// when present (including "{}"), is authoritative and replaces the default data
+// entirely; an explicitly empty string is invalid JSON and fails the entry.
+func bulkTemplateData(entry *BulkEmailEntry, defaultTemplate *Template) (string, error) {
+	if entry.ReplacementEmailContent == nil || entry.ReplacementEmailContent.ReplacementTemplate == nil {
+		return defaultTemplate.TemplateData, nil
+	}
+
+	replacement := entry.ReplacementEmailContent.ReplacementTemplate.ReplacementTemplateData
+	if replacement == nil {
+		return defaultTemplate.TemplateData, nil
+	}
+
+	if *replacement == "" {
+		return "", fmt.Errorf("ReplacementTemplateData must be a JSON object")
+	}
+
+	return *replacement, nil
 }
 
 // cloneDestination returns a deep copy of a destination to avoid aliasing.
