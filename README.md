@@ -466,8 +466,20 @@ kumo provides additional endpoints under the `/kumo/` prefix for testing purpose
 
 | Method | Path | Description |
 |--------|------|-------------|
-| GET | `/kumo/ses/v2/sent-emails` | Retrieve a list of emails sent via the SES v2 `SendEmail` API |
+| GET | `/kumo/ses/v2/sent-emails` | Retrieve a list of emails sent via the SES v2 `SendEmail` and `SendBulkEmail` APIs |
 | GET | `/kumo/pinpointsmsvoicev2/sent-messages` | Retrieve a list of SMS messages sent via the Pinpoint SMS Voice v2 `SendTextMessage` API |
+
+SES v2 `SendEmail` and `SendBulkEmail` render stored templates selected by
+`TemplateName` in the captured subject, text, and HTML bodies. Rendering supports
+scalar `{{name}}` placeholders and nested paths such as `{{contact.firstName}}`,
+without HTML escaping. Bulk entries use replacement template data when provided,
+otherwise the default template data; replacement data replaces the whole object.
+
+Advanced Handlebars helpers, inline partials, inline templates, and template ARN
+resolution are not supported. Rendering errors are reported synchronously as
+`BadRequestException` for single sends or `FAILED` for individual bulk entries;
+failed messages are not recorded. This differs from AWS's asynchronous rendering
+failure notifications.
 
 ### Example: Retrieving sent emails
 

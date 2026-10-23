@@ -516,44 +516,53 @@ func (s *MemoryStorage) SendEmail(_ context.Context, req *SendEmailRequest) (str
 		}
 	}
 
-	messageID := uuid.New().String()
-
-	// Extract content based on email type.
-	var (
-		subject, body, htmlBody string
-		rawData                 []byte
-		destination             = req.Destination
-	)
-
-	switch {
-	case req.Content.Raw != nil:
-		rawData = req.Content.Raw.Data
-		subject, body, htmlBody = extractRawEmailContent(rawData)
-
-		if !hasDestination {
-			destination = extractRawEmailDestination(rawData)
-		}
-	case req.Content.Simple != nil:
-		subject, body, htmlBody = extractSimpleEmailContent(req.Content.Simple)
-	}
-
 	sentEmail := &SentEmail{
-		MessageID:            messageID,
+		MessageID:            uuid.New().String(),
 		FromEmailAddress:     req.FromEmailAddress,
-		Destination:          destination,
-		Subject:              subject,
-		Body:                 body,
-		HTMLBody:             htmlBody,
-		RawData:              rawData,
+		Destination:          req.Destination,
 		ConfigurationSetName: req.ConfigurationSetName,
 		SentAt:               time.Now(),
+	}
+	if err := s.populateSentEmailContent(req.Content, sentEmail, hasDestination); err != nil {
+		return "", err
 	}
 
 	s.SentEmails = append(s.SentEmails, sentEmail)
 
 	s.saveLocked()
 
-	return messageID, nil
+	return sentEmail.MessageID, nil
+}
+
+// populateSentEmailContent must be called with s.mu held.
+func (s *MemoryStorage) populateSentEmailContent(content *EmailContent, sent *SentEmail, hasDestination bool) error {
+	switch {
+	case content.Raw != nil:
+		sent.RawData = content.Raw.Data
+		sent.Subject, sent.Body, sent.HTMLBody = extractRawEmailContent(sent.RawData)
+
+		if !hasDestination {
+			sent.Destination = extractRawEmailDestination(sent.RawData)
+		}
+	case content.Simple != nil:
+		sent.Subject, sent.Body, sent.HTMLBody = extractSimpleEmailContent(content.Simple)
+	case content.Template != nil:
+		tmpl, err := s.resolveSendTemplate(content.Template)
+		if err != nil {
+			return err
+		}
+
+		rendered, err := renderTemplate(tmpl.TemplateContent, content.Template.TemplateData)
+		if err != nil {
+			return &IdentityError{Code: errBadRequest, Message: err.Error()}
+		}
+
+		sent.Subject, sent.Body, sent.HTMLBody = rendered.Subject, rendered.Text, rendered.HTML
+		sent.TemplateName = content.Template.TemplateName
+		sent.TemplateData = content.Template.TemplateData
+	}
+
+	return nil
 }
 
 // SendBulkEmail sends one email per BulkEmailEntry, recording each as a SentEmail.
@@ -602,19 +611,10 @@ func (s *MemoryStorage) validateBulkEmailRequest(req *SendBulkEmailRequest) (*Em
 	}
 
 	defaultTemplate := req.DefaultContent.Template
-	if defaultTemplate.TemplateName == "" {
-		return nil, nil, &IdentityError{
-			Code:    errBadRequest,
-			Message: "DefaultContent.Template.TemplateName is required",
-		}
-	}
 
-	tmpl, exists := s.EmailTemplates[defaultTemplate.TemplateName]
-	if !exists {
-		return nil, nil, &IdentityError{
-			Code:    errNotFound,
-			Message: msgEmailTemplateNotExist,
-		}
+	tmpl, err := s.resolveSendTemplate(defaultTemplate)
+	if err != nil {
+		return nil, nil, err
 	}
 
 	return tmpl, defaultTemplate, nil
@@ -645,6 +645,11 @@ func buildBulkEmailEntry(req *SendBulkEmailRequest, entry *BulkEmailEntry, defau
 		templateData = entry.ReplacementEmailContent.ReplacementTemplate.ReplacementTemplateData
 	}
 
+	rendered, err := renderTemplate(tmpl.TemplateContent, templateData)
+	if err != nil {
+		return nil, BulkEmailEntryResult{Status: "FAILED", Error: err.Error()}
+	}
+
 	sent := &SentEmail{
 		MessageID:            messageID,
 		FromEmailAddress:     req.FromEmailAddress,
@@ -655,11 +660,9 @@ func buildBulkEmailEntry(req *SendBulkEmailRequest, entry *BulkEmailEntry, defau
 		SentAt:               time.Now(),
 	}
 
-	if tmpl.TemplateContent != nil {
-		sent.Subject = tmpl.TemplateContent.Subject
-		sent.Body = tmpl.TemplateContent.Text
-		sent.HTMLBody = tmpl.TemplateContent.HTML
-	}
+	sent.Subject = rendered.Subject
+	sent.Body = rendered.Text
+	sent.HTMLBody = rendered.HTML
 
 	return sent, BulkEmailEntryResult{
 		Status:    "SUCCESS",

@@ -456,7 +456,12 @@ func (s *Service) SendEmail(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		var sErr *IdentityError
 		if errors.As(err, &sErr) {
-			writeError(w, sErr.Code, sErr.Message, http.StatusBadRequest)
+			status := http.StatusBadRequest
+			if sErr.Code == errNotFound {
+				status = http.StatusNotFound
+			}
+
+			writeError(w, sErr.Code, sErr.Message, status)
 
 			return
 		}
